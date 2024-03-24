@@ -1,17 +1,10 @@
 import os
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import torchvision
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision import datasets
-from torchvision.transforms import Compose, Normalize, ToTensor
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 # define dataset from yolov8 annotations
 class YOLOv8Dataset(Dataset):
@@ -52,35 +45,3 @@ class YOLOv8Dataset(Dataset):
             labels = self.target_transform(labels)
         return image.to(self.device), labels.to(self.device)
 
-
-class ConvLayer(nn.Module):
-    """
-    A convolutional layer with batch normalization and ReLU activation.
-    """
-
-    def __init__(
-        self, in_channels, out_channels, kernel_size, stride=1, activation_fn=nn.ReLU()
-    ):
-        super(ConvLayer, self).__init__()
-        self.conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size, stride, kernel_size // 2
-        )
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.activation_fn = activation_fn
-
-    def forward(self, x):
-        return self.activation_fn(self.bn(self.conv(x)))
-
-
-class ConvBlock(nn.Module):
-    def __init__(
-        self, in_channels, downsample_channels, out_channels, kernel_size, stride=1
-    ):
-        super(ConvBlock, self).__init__()
-        self.conv_layers = nn.Sequential(
-            ConvLayer(in_channels, downsample_channels, 1, 1),
-            ConvLayer(downsample_channels, out_channels, kernel_size, stride),
-        )
-
-    def forward(self, x):
-        return self.conv_layers(x)
