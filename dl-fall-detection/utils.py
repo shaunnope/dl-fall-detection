@@ -1,7 +1,9 @@
 import math
-import numpy as np
 
+import numpy as np
 import torch
+import torch.nn as nn
+
 
 def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
     """
@@ -14,8 +16,12 @@ def xywh2xyxy(x: torch.Tensor) -> torch.Tensor:
     Returns:
         y (np.ndarray | torch.Tensor): The bounding box coordinates in (x1, y1, x2, y2) format.
     """
-    assert x.shape[-1] == 4, f"input shape last dimension expected 4 but input shape is {x.shape}"
-    y = torch.empty_like(x) if isinstance(x, torch.Tensor) else np.empty_like(x)  # faster than clone/copy
+    assert (
+        x.shape[-1] == 4
+    ), f"input shape last dimension expected 4 but input shape is {x.shape}"
+    y = (
+        torch.empty_like(x) if isinstance(x, torch.Tensor) else np.empty_like(x)
+    )  # faster than clone/copy
     dw = x[..., 2] / 2  # half-width
     dh = x[..., 3] / 2  # half-height
     y[..., 0] = x[..., 0] - dw  # top left x
@@ -40,7 +46,9 @@ def dist2bbox(distance, anchor_points, xywh=True, dim=-1):
 def bbox2dist(anchor_points, bbox, reg_max):
     """Transform bbox(xyxy) to dist(ltrb)."""
     x1y1, x2y2 = bbox.chunk(2, -1)
-    return torch.cat((anchor_points - x1y1, x2y2 - anchor_points), -1).clamp_(0, reg_max - 0.01)  # dist (lt, rb)
+    return torch.cat((anchor_points - x1y1, x2y2 - anchor_points), -1).clamp_(
+        0, reg_max - 0.01
+    )  # dist (lt, rb)
 
 
 def make_anchors(feats, strides, grid_cell_offset=0.5):
@@ -50,8 +58,12 @@ def make_anchors(feats, strides, grid_cell_offset=0.5):
     dtype, device = feats[0].dtype, feats[0].device
     for i, stride in enumerate(strides):
         _, _, h, w = feats[i].shape
-        sx = torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset  # shift x
-        sy = torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset  # shift y
+        sx = (
+            torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset
+        )  # shift x
+        sy = (
+            torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset
+        )  # shift y
         sy, sx = torch.meshgrid(sy, sx)
         anchor_points.append(torch.stack((sx, sy), -1).view(-1, 2))
         stride_tensor.append(torch.full((h * w, 1), stride, dtype=dtype, device=device))
@@ -99,20 +111,26 @@ def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7
     # IoU
     iou = inter / union
     if CIoU or DIoU or GIoU:
-        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex (smallest enclosing box) width
+        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(
+            b2_x1
+        )  # convex (smallest enclosing box) width
         ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex height
         if CIoU or DIoU:  # Distance or Complete IoU https://arxiv.org/abs/1911.08287v1
             c2 = cw.pow(2) + ch.pow(2) + eps  # convex diagonal squared
             rho2 = (
-                (b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)
+                (b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2)
+                + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)
             ) / 4  # center dist**2
-            if CIoU:  # https://github.com/Zzh-tju/DIoU-SSD-pytorch/blob/master/utils/box/box_utils.py#L47
+            if (
+                CIoU
+            ):  # https://github.com/Zzh-tju/DIoU-SSD-pytorch/blob/master/utils/box/box_utils.py#L47
                 v = (4 / math.pi**2) * ((w2 / h2).atan() - (w1 / h1).atan()).pow(2)
                 with torch.no_grad():
                     alpha = v / (v - iou + (1 + eps))
                 return iou - (rho2 / c2 + v * alpha)  # CIoU
             return iou - rho2 / c2  # DIoU
         c_area = cw * ch + eps  # convex area
-        return iou - (c_area - union) / c_area  # GIoU https://arxiv.org/pdf/1902.09630.pdf
+        return (
+            iou - (c_area - union) / c_area
+        )  # GIoU https://arxiv.org/pdf/1902.09630.pdf
     return iou  # IoU
-
