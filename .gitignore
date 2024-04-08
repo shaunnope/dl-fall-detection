@@ -4,3 +4,8 @@ Human-Fall-Detection-5/
 Augmented/
 
 __pycache__/
+
+datasets/
+
+runs/
+*/runs/

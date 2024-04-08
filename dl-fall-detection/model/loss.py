@@ -481,10 +481,7 @@ class DetectionLoss:
         anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
 
         # Targets
-        targets = torch.cat(
-            (batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]),
-            1,
-        )
+        targets = batch
         targets = self.preprocess(
             targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]]
         )

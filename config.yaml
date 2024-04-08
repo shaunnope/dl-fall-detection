@@ -1,0 +1,9 @@
+path: Human-fall-detection
+train: train/images
+val: valid/images
+
+names:
+  0: B
+  1: Fall-Detected
+  2: Sitting
+  3: Walking
