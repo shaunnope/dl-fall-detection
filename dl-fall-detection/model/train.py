@@ -13,7 +13,8 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
   for epoch in range(epochs):
     model.train()
     running_loss = torch.zeros(3, device=device)
-    for i, (inputs, labels) in tqdm(enumerate(train_loader, 0), total=len(train_loader)):
+    pbar = tqdm(train_loader)
+    for i, (inputs, labels) in enumerate(pbar):
       inputs, labels = inputs.to(device), labels.to(device)
       optimizer.zero_grad()
       outputs = model(inputs)
@@ -22,7 +23,9 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
       optimizer.step()
       running_loss += loss
       if i % 10 == 9:
-        print(f"[{epoch + 1}, {i + 1}] train loss: {running_loss / 10}")
+        lbox, lobj, lcls = running_loss / 10
+        pbar.set_description(f"[{epoch + 1}, {i + 1}] train loss: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}")
+        # print(f"[{epoch + 1}, {i + 1}] train loss: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}")
         running_loss = torch.zeros(3, device=device)
 
       if i % 20 == 19:
@@ -30,20 +33,30 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
       
 
     model.eval()
-    for i, (inputs, labels) in tqdm(enumerate(valid_loader, 0), total=len(valid_loader)):
+    running_loss = torch.zeros(3, device=device)
+    pbar = tqdm(valid_loader)
+    for i, (inputs, labels) in enumerate(pbar):
       inputs, labels = inputs.to(device), labels.to(device)
-      outputs = model(inputs)
+      outputs = model(inputs, True)
       _, loss = criterion(outputs, labels)
+      running_loss += loss
       if i % 10 == 9:
-        print(f"[{epoch + 1}, {i + 1}] valid loss: {loss}")
+        lbox, lobj, lcls = running_loss / i
+        pbar.set_description(f"[{epoch + 1}, {i + 1}] valid loss: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}")
+    lbox, lobj, lcls = running_loss / len(valid_loader)
+    print(f"[{epoch + 1}] valid loss: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}")
 
-  for i, (inputs, labels) in tqdm(enumerate(test_loader, 0), total=len(test_loader)):
+  total_loss = torch.zeros(3, device=device)
+  pbar = tqdm(test_loader)
+  for i, (inputs, labels) in enumerate(pbar):
     inputs, labels = inputs.to(device), labels.to(device)
-    outputs = model(inputs)
+    outputs = model(inputs, True)
     _, loss = criterion(outputs, labels)
+    total_loss += loss
     if i % 10 == 9:
-      print(f"[{epoch + 1}, {i + 1}] test loss: {loss}")
+      lbox, lobj, lcls = total_loss / i
+      pbar.set_description(f"[{epoch + 1}, {i + 1}] test loss: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}")
 
-  print(f"Final test loss: {loss}")
+  print(f"Final test loss: {total_loss / len(test_loader)}")
 
   print("Finished Training")

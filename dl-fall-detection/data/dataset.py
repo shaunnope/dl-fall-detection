@@ -56,6 +56,7 @@ class YOLOv8Dataset(Dataset):
             self.device = dir.device
             return
 
+        self.save_dir = dir
         self.img_dir = f"{dir}/images"
         self.label_dir = f"{dir}/labels"
 
@@ -100,6 +101,26 @@ class YOLOv8Dataset(Dataset):
         if self.target_transform:
             labels = self.target_transform(labels, self.device)
         return image.to(self.device), labels
+    
+    def relabel(self, label_dict, dir = "relabeled"):
+        assert isinstance(dir, str), "dir must be a string"
+
+        save_dir = f"{self.label_dir}_{dir}"
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        for img_name in self.img_names:
+            label_path = os.path.join(self.label_dir, img_name + ".txt")
+            with open(label_path) as f:
+                labels = [
+                    [float(l) for l in line.rstrip("\n").split()] for line in f
+                ]
+            with open(os.path.join(save_dir, img_name + ".txt"), "w") as f:
+                for label in labels:
+                    if label[0] in label_dict:
+                        label[0] = label_dict[label[0]]
+                        f.write(" ".join(map(str, label)) + "\n")
+
 
 def get_subset(datasets, end=8):
     return {

@@ -29,22 +29,8 @@ class DFL(nn.Module):
         )
 
 
-class DetectBase(nn.Module):
-    "Base detection head for YOLOv8 detection loss function"
-
-    def __init__(self, nc, nl, no, reg_max, stride, device, args=None):
-        super().__init__()
-        self.args = args
-        self.nc = nc
-        self.nl = nl
-        self.no = no
-        self.reg_max = reg_max
-
-        self.device = device
-
-
-class YOLOHead(nn.Module):
-    """YOLOv8 Detect head for detection models."""
+class DetectHead(nn.Module):
+    """Detection head adapted from YOLOv8."""
 
     dynamic = False  # force grid reconstruction
     shape = None
@@ -52,7 +38,7 @@ class YOLOHead(nn.Module):
     strides = torch.empty(0)  # init
 
     def __init__(self, nc=80, ch=()):
-        """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
+        """Initialize the detection layer with specified number of classes and channels."""
         super().__init__()
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
@@ -87,32 +73,29 @@ class YOLOHead(nn.Module):
             "dfl": 1.5,  # (float) dfl loss gain
         }
 
-        # self.build(3)
-
-    def forward(self, x):
+    def forward(self, x, encoded=False):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
-        for i in range(self.nl):
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
-        # if self.training:  # Training path
-        #     return x
 
-        # # Inference path
-        # shape = x[0].shape  # BCHW
-        # x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
-        # if self.dynamic or self.shape != shape:
-        #     self.anchors, self.strides = (
-        #         x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5)
-        #     )
-        #     self.shape = shape
+        x = [torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1) for i in range(self.nl)]
+        if self.training or encoded:  # Training path
+            return x
 
-        # box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
-        # dbox = (
-        #     self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
-        # )
+        # Inference path
+        shape = x[0].shape  # BCHW
+        x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
+        if self.dynamic or self.shape != shape:
+            self.anchors, self.strides = (
+                x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5)
+            )
+            self.shape = shape
 
-        # y = torch.cat((dbox, cls.sigmoid()), 1)
-        # return y
-        return x
+        box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
+        dbox = (
+            self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
+        )
+
+        y = torch.cat((dbox, cls.sigmoid()), 1)
+        return y
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
@@ -131,45 +114,28 @@ class YOLOHead(nn.Module):
 class YOLOBackbone(nn.Module):
     """Backbone of the YOLO model."""
 
-    def __init__(self, input_ch=3, ch=(64,)):
+    def __init__(self, input_ch=3, ch=(64,), hidden_ch=512, dropout=0.2):
         super(YOLOBackbone, self).__init__()
 
         self.nl = len(ch)
-        ch = (512, *ch)
+        ch = (hidden_ch, *ch)
 
         self.conv_layers = nn.Sequential(
             ConvLayer(input_ch, 64, 7, 2),
             ConvLayer(64, 192, 3, 2),
-            ResidualConv(192, 192, 3, 1),
-            ConvBlock(192, 128, 256, 3, 1),
-            ConvBlock(256, 256, 512, 3, 1),
-            # nn.MaxPool2d(2, 2),
-            # ConvBlock(512, 256, 512, 3, 1),
-            # ConvBlock(512, 256, 512, 3, 1),
-            # ConvBlock(512, 256, 512, 3, 1),
-            # ConvBlock(512, 256, 512, 3, 1),
-            ConvBlock(512, 512, 1024, 3, 1),
+            ResidualConv(192, 192, 3, 1, dropout=dropout),
+            ConvBlock(192, 128, 1024, 3, 1),
+            # ConvBlock(256, 256, 512, 3, 1),
+            # ConvBlock(512, 512, 1024, 3, 1),
             nn.MaxPool2d(2, 2),
-            # ConvBlock(1024, 512, 1024, 3, 1),
-            # ConvBlock(1024, 512, 1024, 3, 1),
-            ConvLayer(1024, 512, 3, 1),
-            ResidualConv(512, 512, 3, 1),
+            ConvLayer(1024, hidden_ch, 3, 1),
+            # ResidualConv(512, 512, 3, 1),
+            nn.Dropout(dropout),
         )
 
         self.detection_layers = [
             ConvLayer(ch[i], ch[i + 1], 3, 2) for i in range(len(ch) - 1)
         ]
-
-        # self.conv_layers2 = nn.Sequential(
-        #     ConvLayer(1024, 1024, 3, 1),
-        #     ConvLayer(1024, 1024, 3, 2),
-        #     ConvLayer(1024, 1024, 3, 1),
-        #     ConvLayer(1024, 1024, 3, 1),
-        # )
-
-        # self.head = nn.Sequential(
-        #     ConvLayer(1024, 1024, 3, 1), nn.Conv2d(1024, self.no, 1, 1)
-        # )
 
     def forward(self, x):
         x = self.conv_layers(x)
@@ -179,25 +145,21 @@ class YOLOBackbone(nn.Module):
             prev = layer(prev)
             out[i] = prev
         return out
-        # x = self.conv_layers2(x)
-        # x = x.view(x.size(0), -1)
-        # x = self.fc_layers(x)
-        # x = self.head(x)
-        # return x
+
 
 
 class YOLONet(nn.Module):
 
-    def __init__(self, nc=80, ch=(64,), input_ch=3):
+    def __init__(self, nc=80, ch=(64,), input_ch=3, hidden_ch=512, dropout=0.2):
         super(YOLONet, self).__init__()
-        self.backbone = YOLOBackbone(ch=ch, input_ch=input_ch)
-        self.head = YOLOHead(nc=nc, ch=ch)
+        self.backbone = YOLOBackbone(ch=ch, input_ch=input_ch, hidden_ch=hidden_ch, dropout=dropout)
+        self.head = DetectHead(nc=nc, ch=ch)
 
         self.build()
 
-    def forward(self, x):
+    def forward(self, x, encoded=False):
         x = self.backbone(x)
-        out = self.head(x)
+        out = self.head(x, encoded)
         return out
 
     def build(self, ch=3):
@@ -210,25 +172,8 @@ class YOLONet(nn.Module):
         self.head.bias_init()
 
 
-class YOLOPretrainer(nn.Module):
-    def __init__(self, model: YOLONet, out_features: int):
-        super(YOLOPretrainer, self).__init__()
-        self.model = model
-        self.conv_layers = model.conv_layers
-
-        self.avg_pool = nn.AvgPool2d(2, 2)
-        self.fc = nn.Linear(1024 * model.s * model.s, out_features)
-
-    def forward(self, x):
-        out = self.conv_layers(x)
-        out = self.avg_pool(out)
-        out = out.view(out.size(0), -1)
-        out = self.fc(out)
-        return out
-
-
 if __name__ == "__main__":
-    head = YOLOHead()
+    head = DetectHead()
 
     print(head)
 

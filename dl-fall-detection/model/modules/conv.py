@@ -37,7 +37,7 @@ class ConvBlock(nn.Module):
 
 
 class ResidualConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, dropout=None):
         super(ResidualConv, self).__init__()
         self.conv = ConvLayer(in_channels, out_channels, kernel_size, stride)
         self.shortcut = (
@@ -46,5 +46,7 @@ class ResidualConv(nn.Module):
             else ConvLayer(in_channels, out_channels, 1, stride)
         )
 
+        self.dropout = nn.Dropout(dropout) if dropout is not None else nn.Identity()
+
     def forward(self, x):
-        return self.conv(x) + self.shortcut(x)
+        return self.conv(self.dropout(x)) + self.shortcut(x)
