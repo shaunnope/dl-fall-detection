@@ -3,8 +3,27 @@ import math
 import torch
 import torch.nn as nn
 from model.modules.conv import ConvBlock, ConvLayer, ResidualConv
-from utils import dist2bbox, make_anchors
+from utils import dist2bbox, make_anchors, bbox_iou
 
+# region: Dive into Deep Learning 
+## http://d2l.ai/chapter_computer-vision/anchor.html
+
+def nms(boxes, scores, iou_threshold=0.5):
+    """Sort confidence scores of predicted bounding boxes."""
+    B = torch.argsort(scores, dim=-1, descending=True)
+    keep = []  # Indices of predicted bounding boxes that will be kept
+    while B.numel() > 0:
+        i = B[0]
+        keep.append(i)
+        if B.numel() == 1: break
+        iou = bbox_iou(boxes[i, :].reshape(-1, 4),
+                      boxes[B[1:], :].reshape(-1, 4)).reshape(-1)
+        inds = torch.nonzero(iou <= iou_threshold).reshape(-1)
+        B = B[inds + 1]
+    return torch.tensor(keep, device=boxes.device)
+
+
+# endregion
 
 class DFL(nn.Module):
     """
@@ -76,10 +95,13 @@ class DetectHead(nn.Module):
     def forward(self, x, encoded=False):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
 
-        x = [torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]).log_softmax(1)), 1) for i in range(self.nl)]
+        x = [torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1) for i in range(self.nl)]
         if self.training or encoded:  # Training path
             return x
-
+        
+        return self.decode(x)
+    
+    def decode(self, x):
         # Inference path
         shape = x[0].shape  # BCHW
         x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
@@ -93,7 +115,7 @@ class DetectHead(nn.Module):
         dbox = (
             self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
         )
-        y = torch.cat((dbox, cls), 1)
+        y = torch.cat((dbox, cls.sigmoid()), 1)
         return y
 
     def bias_init(self):
@@ -144,7 +166,6 @@ class YOLOBackbone(nn.Module):
             prev = layer(prev)
             out[i] = prev
         return out
-
 
 
 class YOLONet(nn.Module):
