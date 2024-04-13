@@ -99,7 +99,12 @@ class YOLOv8Dataset(Dataset):
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
-            labels = self.target_transform(labels, self.device)
+            try:
+                labels = self.target_transform(labels, self.device)
+            except ValueError as e:
+                print(idx, self.img_names[idx])
+                print(labels)
+                raise e
         return image.to(self.device), labels
     
     def relabel(self, label_dict, dir = "relabeled"):

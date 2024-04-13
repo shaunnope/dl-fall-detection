@@ -21,6 +21,8 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
       total_loss, loss = criterion(outputs, labels)
       total_loss.backward()
       optimizer.step()
+
+      del inputs, labels, outputs
       running_loss += loss
       if i % 10 == 9:
         lbox, lobj, lcls = running_loss / 10
