@@ -175,11 +175,11 @@ class YOLOBackbone(nn.Module):
             ConvLayer(input_ch, 64, 7, 2),
             ConvLayer(64, 192, 3, 2),
             ResidualConv(192, 192, 3, 1, dropout=dropout),
-            ConvBlock(192, 128, 1024, 3, 1),
+            ConvBlock(192, 128, hidden_ch, 3, 1),
             # ConvBlock(256, 256, 512, 3, 1),
             # ConvBlock(512, 512, 1024, 3, 1),
             nn.MaxPool2d(2, 2),
-            ConvLayer(1024, hidden_ch, 3, 1),
+            # ConvLayer(1024, hidden_ch, 3, 1),
             # ResidualConv(512, 512, 3, 1),
             nn.Dropout(dropout),
         )

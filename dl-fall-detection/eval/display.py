@@ -88,7 +88,7 @@ def plot_losses(losses: dict, save_dir: str = "runs"):
 
 
     f1_scores = np.array(losses['valid']['f1']).T
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(6,4))
 
     for i, f1 in enumerate(f1_scores):
         ax.plot(losses['valid']['iter'], f1, label=f"class {i}")
