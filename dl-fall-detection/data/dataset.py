@@ -3,19 +3,20 @@ import os
 import torch
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+import numpy as np
+import albumentations as A
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-def target_transform(labels: list[list[float]], device=DEVICE, seperate=False) -> tuple:
-    if seperate:
-        # return cls and box tensors separately
-        cls_tensor = torch.tensor([label[0] for label in labels], dtype=torch.long).unsqueeze(1)
-        box_tensor = torch.tensor([label[1:] for label in labels], dtype=torch.float)
-        return cls_tensor.to(device), box_tensor.to(device)
+# def target_transform(labels: list[list[float]], device=DEVICE, seperate=False) -> tuple:
+#     if seperate:
+#         # return cls and box tensors separately
+#         cls_tensor = torch.tensor([label[0] for label in labels], dtype=torch.long).unsqueeze(1)
+#         box_tensor = torch.tensor([label[1:] for label in labels], dtype=torch.float)
+#         return cls_tensor.to(device), box_tensor.to(device)
     
-    return torch.tensor(labels, dtype=torch.float)
-
+#     return torch.tensor(labels, dtype=torch.float)
 
 def collate_fn(batch):
     device = batch[0][0].device
@@ -43,7 +44,7 @@ class YOLOv8Dataset(Dataset):
     """
 
     def __init__(
-        self, dir, transform=None, target_transform=target_transform, device=DEVICE, end=None
+        self, dir, transform=None, device=DEVICE, end=None
     ):
         if isinstance(dir, self.__class__):
             # copy the dataset
@@ -51,8 +52,7 @@ class YOLOv8Dataset(Dataset):
             self.label_dir = dir.label_dir
             self.img_names = dir.img_names if end is None else dir.img_names[:end]
             self.transform = dir.transform
-
-            self.target_transform = dir.target_transform
+            #removed target_transform
             self.device = dir.device
             return
 
@@ -69,7 +69,6 @@ class YOLOv8Dataset(Dataset):
             self.img_names = self.img_names[:end]
 
         self.transform = transform
-        self.target_transform = target_transform
         self.device = device
 
     def __len__(self):
@@ -90,6 +89,7 @@ class YOLOv8Dataset(Dataset):
         img_path = os.path.join(self.img_dir, self.img_names[idx] + ".jpg")
         label_path = os.path.join(self.label_dir, self.img_names[idx] + ".txt")
         image = Image.open(img_path)
+        image = np.asarray(image)
 
         with open(label_path) as f:
             labels = [
@@ -97,16 +97,38 @@ class YOLOv8Dataset(Dataset):
             ]
 
         if self.transform:
-            image = self.transform(image)
-        if self.target_transform:
             try:
-                labels = self.target_transform(labels, self.device)
+                labels, image = self.apply_transformations(labels, image)
+                image = torch.tensor(image, dtype=torch.float32).to(self.device)
+                labels = torch.tensor(labels, dtype=torch.float32).to(self.device)
             except ValueError as e:
                 print(idx, self.img_names[idx])
                 print(labels)
                 raise e
         return image.to(self.device), labels
     
+    def apply_transformations(self, labels, image):
+        transformed_labels = []
+
+        for label in labels:
+            class_label = label[0]
+            x_min_ratio, y_min_ratio, bbox_width_ratio, bbox_height_ratio = label[1]
+
+            transformed = self.transform(image=image, 
+                                     bboxes=[[x_min_ratio, y_min_ratio, bbox_width_ratio, bbox_height_ratio]], 
+                                     class_labels=[class_label])
+
+            if transformed['bboxes'] != []:
+                augmented_bbox = transformed['bboxes'][0]
+
+                x_min_aug, y_min_aug, width_aug, height_aug = augmented_bbox
+
+                if width_aug > 0 and height_aug > 0:
+                    transformed_labels.append([class_label, [x_min_aug, y_min_aug, width_aug, height_aug]])
+        
+        augmented_image_tensor = torch.tensor(transformed['image'], dtype=torch.float32)
+        return transformed_labels, augmented_image_tensor
+        
     def relabel(self, label_dict, dir = "relabeled"):
         assert isinstance(dir, str), "dir must be a string"
 
@@ -135,15 +157,15 @@ def get_subset(datasets, end=8):
     }
 
 
-def get_datasets(dir, transform=None, target_transform=target_transform, device=DEVICE, end=None):
+def get_datasets(dir, transform=None, device=DEVICE, end=None):
     return {
-        "train": YOLOv8Dataset(f"{dir}/train", transform, target_transform, device),
-        "valid": YOLOv8Dataset(f"{dir}/valid", transform, target_transform, device),
-        "test": YOLOv8Dataset(f"{dir}/test", transform, target_transform, device),
+        "train": YOLOv8Dataset(f"{dir}/train", transform, device),
+        "valid": YOLOv8Dataset(f"{dir}/valid", transform, device),
+        "test": YOLOv8Dataset(f"{dir}/test", transform, device),
     } if end is None else {
-        "train": YOLOv8Dataset(f"{dir}/train", transform, target_transform, device, end**2),
-        "valid": YOLOv8Dataset(f"{dir}/valid", transform, target_transform, device, end),
-        "test": YOLOv8Dataset(f"{dir}/test", transform, target_transform, device, end),
+        "train": YOLOv8Dataset(f"{dir}/train", transform, device, end**2),
+        "valid": YOLOv8Dataset(f"{dir}/valid", transform, device, end),
+        "test": YOLOv8Dataset(f"{dir}/test", transform, device, end),
     }
 
 
@@ -174,8 +196,8 @@ def get_dataloaders(datasets, batch_size=16, shuffle=True, num_workers=0):
         ),
     }
 
-def get_data(dir, transform=None, target_transform=target_transform, batch_size=16, device=DEVICE, end=None):
-    datasets = get_datasets(dir, transform, target_transform, device, end)
+def get_data(dir, transform=None, batch_size=16, device=DEVICE, end=None):
+    datasets = get_datasets(dir, transform, device, end)
     return {
         "datasets": datasets,
         "dataloaders": get_dataloaders(datasets, batch_size=batch_size),
