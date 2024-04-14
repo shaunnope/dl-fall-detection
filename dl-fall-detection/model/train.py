@@ -38,6 +38,7 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
       n = len(train_loader)
       pbar = tqdm(train_loader)
       for i, (inputs, labels) in enumerate(pbar):
+        torch.cuda.empty_cache()
         inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
@@ -46,6 +47,7 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
         optimizer.step()
 
         del inputs, labels, outputs
+
         running_loss += loss
         if i % 4 == 3:
           lbox, lobj, lcls = running_loss / 4
@@ -63,8 +65,9 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
 
         if i % 20 == 19:
           torch.save(model.state_dict(), f"{save_dir}/model_{epoch}_{i}.pt")
-        
 
+      del total_loss, loss, running_loss
+        
       model.eval()
       running_loss = torch.zeros(3, device=device)
       total_loss = 0.0
@@ -75,6 +78,7 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
       n = len(valid_loader)
       pbar = tqdm(valid_loader)
       for i, (inputs, labels) in enumerate(pbar):
+        torch.cuda.empty_cache()
         inputs, labels = inputs.to(device), labels.to(device)
         outputs = model(inputs, True)
         ttl, loss, preds, targets = criterion(outputs, labels, True)
@@ -97,6 +101,10 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
           f1s = " ".join([f"{r:.3f}" for r in f1_scores.tolist()])
           vf1.append(f1_scores.tolist())
 
+          del f1_scores, vpreds, vtargets, lbox, lobj, lcls
+          vpreds = torch.tensor([], device=device, dtype=torch.int64)
+          vtargets = torch.tensor([], device=device, dtype=torch.int64)
+
           pbar.set_description(f"[{epoch + 1}, {i + 1}] valid: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}, f1: {f1s}")
       
       lbox, lobj, lcls = running_loss / len(valid_loader)
@@ -107,13 +115,15 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
 
       f1_scores = f1(vpreds, vtargets, num_classes = nc, average=None)
       f1s = " ".join([f"{r:.3f}" for r in f1_scores.tolist()])
-      vf1.append(f1_scores.tolist())
+      # vf1.append(f1_scores.tolist())
 
       print(f"[{epoch + 1}] valid: {lbox:.4f}, {lobj:.4f}, {lcls:.4f}, f1: {f1s}")
 
       if total_loss < best["valid"][0]:
         torch.save(model.state_dict(), f"{save_dir}/model_best_val.pt")
         best["valid"] = (total_loss.item(), epoch, i)
+
+      del total_loss, loss, running_loss, vpreds, vtargets, f1_scores
 
     total_loss = torch.zeros(3, device=device)
 
@@ -123,6 +133,7 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
     n = len(test_loader)
     pbar = tqdm(test_loader)
     for i, (inputs, labels) in enumerate(pbar):
+      torch.cuda.empty_cache()
       inputs, labels = inputs.to(device), labels.to(device)
       outputs = model(inputs, True)
       _, loss, preds, targets = criterion(outputs, labels, True)
@@ -130,7 +141,7 @@ def train(model, train_loader, valid_loader, test_loader, epochs, criterion, sav
       tpreds = torch.cat([tpreds, preds], 0)
       ttargets = torch.cat([ttargets, targets], 0)
 
-      del inputs, labels, outputs
+      del inputs, labels, outputs, preds, targets
       total_loss += loss
 
       if i % 4 == 3:

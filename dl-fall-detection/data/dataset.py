@@ -163,7 +163,7 @@ def get_datasets(dir, transform=None, device=DEVICE, end=None):
         "valid": YOLOv8Dataset(f"{dir}/valid", transform, device),
         "test": YOLOv8Dataset(f"{dir}/test", transform, device),
     } if end is None else {
-        "train": YOLOv8Dataset(f"{dir}/train", transform, device, end**2),
+        "train": YOLOv8Dataset(f"{dir}/train", transform, device, end*4),
         "valid": YOLOv8Dataset(f"{dir}/valid", transform, device, end),
         "test": YOLOv8Dataset(f"{dir}/test", transform, device, end),
     }
