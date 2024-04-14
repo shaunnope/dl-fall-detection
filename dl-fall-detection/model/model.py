@@ -16,11 +16,43 @@ def nms(boxes, scores, iou_threshold=0.5):
         i = B[0]
         keep.append(i)
         if B.numel() == 1: break
-        iou = bbox_iou(boxes[i, :].reshape(-1, 4),
-                      boxes[B[1:], :].reshape(-1, 4)).reshape(-1)
+        iou = bbox_iou(boxes[:, i], boxes[:, B[1:]].reshape(-1))
         inds = torch.nonzero(iou <= iou_threshold).reshape(-1)
         B = B[inds + 1]
     return torch.tensor(keep, device=boxes.device)
+
+
+
+def multibox_detection(cls_probs, pred_bboxes, nms_threshold=0.5,
+                       pos_threshold=0.009999999):
+    """Predict bounding boxes using non-maximum suppression."""
+    device, batch_size = cls_probs.device, cls_probs.shape[0]
+    num_classes, num_anchors = cls_probs.shape[1], cls_probs.shape[2]
+    out = []
+    for i in range(batch_size):
+        cls_prob, predicted_bb = cls_probs[i], pred_bboxes[i]
+        conf, class_id = torch.max(cls_prob[1:], 0)
+        keep = nms(predicted_bb, conf, nms_threshold)
+        # Find all non-`keep` indices and set the class to background
+        all_idx = torch.arange(num_anchors, dtype=torch.long, device=device)
+        combined = torch.cat((keep, all_idx))
+        uniques, counts = combined.unique(return_counts=True)
+        non_keep = uniques[counts == 1]
+        all_id_sorted = torch.cat((keep, non_keep))
+        class_id[non_keep] = -1
+        class_id = class_id[all_id_sorted]
+        conf, predicted_bb = conf[all_id_sorted], predicted_bb[all_id_sorted]
+        # Here `pos_threshold` is a threshold for positive (non-background)
+        # predictions
+        below_min_idx = (conf < pos_threshold)
+        class_id[below_min_idx] = -1
+        conf[below_min_idx] = 1 - conf[below_min_idx]
+        pred_info = torch.cat((class_id.unsqueeze(1),
+                               conf.unsqueeze(1),
+                               predicted_bb), dim=1)
+        out.append(pred_info)
+    return torch.stack(out)
+
 
 
 # endregion
@@ -56,7 +88,7 @@ class DetectHead(nn.Module):
     anchors = torch.empty(0)  # init
     strides = torch.empty(0)  # init
 
-    def __init__(self, nc=80, ch=()):
+    def __init__(self, nc=80, ch=(), scale=1.0):
         """Initialize the detection layer with specified number of classes and channels."""
         super().__init__()
         self.nc = nc  # number of classes
@@ -70,17 +102,20 @@ class DetectHead(nn.Module):
         c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(
             ch[0], min(self.nc, 100)
         )  # channels
+        c2_h = int(c2 * scale)  # hidden channels
+        c3_h = int(c3 * scale)  # hidden channels
+
         self.cv2 = nn.ModuleList(
             nn.Sequential(
                 ConvLayer(x, c2, 3),
-                ConvLayer(c2, c2, 3),
-                nn.Conv2d(c2, 4 * self.reg_max, 1),
+                ConvLayer(c2, c2_h, 3),
+                nn.Conv2d(c2_h, 4 * self.reg_max, 1),
             )
             for x in ch
         )
         self.cv3 = nn.ModuleList(
             nn.Sequential(
-                ConvLayer(x, c3, 3), ConvLayer(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)
+                ConvLayer(x, c3, 3), ConvLayer(c3, c3_h, 3), nn.Conv2d(c3_h, self.nc, 1)
             )
             for x in ch
         )
@@ -167,17 +202,30 @@ class YOLOBackbone(nn.Module):
         return out
 
 
+class EnsembleModel(nn.Module):
+    def __init__(self, models):
+        super(EnsembleModel, self).__init__()
+        self.models = nn.ModuleList(models)
+
+        self.conv = nn.Conv2d(1024, 1024, 1)
+
+    def forward(self, x):
+        return [model(x) for model in self.models]
+
 class YOLONet(nn.Module):
 
-    def __init__(self, nc=80, ch=(64,), input_ch=3, hidden_ch=512, dropout=0.2):
+    def __init__(self, nc=80, ch=(64,), input_ch=3, hidden_ch=512, dropout=0.2, nheads=2):
         super(YOLONet, self).__init__()
         self.backbone = YOLOBackbone(ch=ch, input_ch=input_ch, hidden_ch=hidden_ch, dropout=dropout)
         self.head = DetectHead(nc=nc, ch=ch)
+
+        # self.heads = [DetectHead(nc=nc, ch=ch, scale=(1/(i+1))) for i in range(nheads)]
 
         self.build()
 
     def forward(self, x, encoded=False):
         x = self.backbone(x)
+        # outs = [head(x, encoded) for head in self.heads]
         out = self.head(x, encoded)
         return out
 

@@ -9,14 +9,13 @@ import albumentations as A
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# def target_transform(labels: list[list[float]], device=DEVICE, seperate=False) -> tuple:
-#     if seperate:
-#         # return cls and box tensors separately
-#         cls_tensor = torch.tensor([label[0] for label in labels], dtype=torch.long).unsqueeze(1)
-#         box_tensor = torch.tensor([label[1:] for label in labels], dtype=torch.float)
-#         return cls_tensor.to(device), box_tensor.to(device)
-    
-#     return torch.tensor(labels, dtype=torch.float)
+transform_data = A.Compose([
+            A.ColorJitter(),
+            A.HorizontalFlip(p=0.5),
+            A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.2, rotate_limit=20, p=0.5), # droped the shift scale rotate until fixed bbox issue
+            A.Normalize()
+            ],
+            bbox_params=A.BboxParams(format='yolo', min_area=0, min_visibility=0.5, label_fields=['class_labels']))
 
 def collate_fn(batch):
     device = batch[0][0].device
@@ -31,8 +30,8 @@ def collate_fn(batch):
         labels.extend(label)
 
     images = torch.stack(images).to(device)
-    batch_idx = torch.tensor(batch_idx)
-    labels = torch.stack(labels)
+    batch_idx = torch.tensor(batch_idx).to(device)
+    labels = torch.stack(labels).to(device)
     combined = torch.cat([batch_idx.unsqueeze(1), labels], dim=1).to(device)
     return images, combined
 
@@ -44,7 +43,7 @@ class YOLOv8Dataset(Dataset):
     """
 
     def __init__(
-        self, dir, transform=None, device=DEVICE, end=None
+        self, dir, transform=transform_data, device=DEVICE, end=None
     ):
         if isinstance(dir, self.__class__):
             # copy the dataset
@@ -91,43 +90,44 @@ class YOLOv8Dataset(Dataset):
         image = Image.open(img_path)
         image = np.asarray(image)
 
-        with open(label_path) as f:
-            labels = [
-                [float(l) for l in line.rstrip("\n").split()] for line in f
-            ]
+        labels = self.load_label(label_path)
 
         if self.transform:
             try:
                 labels, image = self.apply_transformations(labels, image)
-                image = torch.tensor(image, dtype=torch.float32).to(self.device)
+                image = torch.tensor(image, dtype=torch.float32).to(self.device).permute(2, 0, 1)
                 labels = torch.tensor(labels, dtype=torch.float32).to(self.device)
             except ValueError as e:
                 print(idx, self.img_names[idx])
                 print(labels)
                 raise e
-        return image.to(self.device), labels
+        return image, labels
     
     def apply_transformations(self, labels, image):
+        bboxes = [[label[1][0], label[1][1], label[1][2], label[1][3]] for label in labels]
+        class_labels = [label[0] for label in labels]
+
+        # Apply transformations to image and bounding boxes
+        transformed = self.transform(image=image, bboxes=bboxes, class_labels=class_labels)
+
         transformed_labels = []
+        for class_label, bbox_label in zip(transformed['class_labels'], transformed['bboxes']):
+            transformed_labels.append([class_label, *bbox_label])
 
-        for label in labels:
-            class_label = label[0]
-            x_min_ratio, y_min_ratio, bbox_width_ratio, bbox_height_ratio = label[1]
-
-            transformed = self.transform(image=image, 
-                                     bboxes=[[x_min_ratio, y_min_ratio, bbox_width_ratio, bbox_height_ratio]], 
-                                     class_labels=[class_label])
-
-            if transformed['bboxes'] != []:
-                augmented_bbox = transformed['bboxes'][0]
-
-                x_min_aug, y_min_aug, width_aug, height_aug = augmented_bbox
-
-                if width_aug > 0 and height_aug > 0:
-                    transformed_labels.append([class_label, [x_min_aug, y_min_aug, width_aug, height_aug]])
-        
         augmented_image_tensor = torch.tensor(transformed['image'], dtype=torch.float32)
         return transformed_labels, augmented_image_tensor
+    
+    
+    def load_label(self, label_path):
+        with open(label_path, 'r') as label_file:
+            labels = []
+            for line in label_file:
+                l = line.split()
+                class_label = int(l[0])
+                bbox_labels = [float(x) for x in l[1:]]
+                if bbox_labels != []:
+                    labels.append([class_label, bbox_labels])
+        return labels
         
     def relabel(self, label_dict, dir = "relabeled"):
         assert isinstance(dir, str), "dir must be a string"
