@@ -28,6 +28,9 @@ def multibox_detection(cls_probs, pred_bboxes, nms_threshold=0.5,
     """Predict bounding boxes using non-maximum suppression."""
     device, batch_size = cls_probs.device, cls_probs.shape[0]
     num_classes, num_anchors = cls_probs.shape[1], cls_probs.shape[2]
+
+    cls_probs = cls_probs.exp()
+
     out = []
     for i in range(batch_size):
         cls_prob, predicted_bb = cls_probs[i], pred_bboxes[i]
@@ -38,21 +41,13 @@ def multibox_detection(cls_probs, pred_bboxes, nms_threshold=0.5,
         combined = torch.cat((keep, all_idx))
         uniques, counts = combined.unique(return_counts=True)
         non_keep = uniques[counts == 1]
-        all_id_sorted = torch.cat((keep, non_keep))
-        class_id[non_keep] = -1
-        class_id = class_id[all_id_sorted]
-        conf, predicted_bb = conf[all_id_sorted], predicted_bb[all_id_sorted]
-        # Here `pos_threshold` is a threshold for positive (non-background)
-        # predictions
-        below_min_idx = (conf < pos_threshold)
-        class_id[below_min_idx] = -1
-        conf[below_min_idx] = 1 - conf[below_min_idx]
-        pred_info = torch.cat((class_id.unsqueeze(1),
-                               conf.unsqueeze(1),
-                               predicted_bb), dim=1)
+        fg_mask = (conf >= pos_threshold) & (counts != 1)
+        pred_info = torch.cat((class_id[fg_mask].unsqueeze(1),
+                               conf[fg_mask].unsqueeze(1),
+                               predicted_bb.permute(1,0)[fg_mask],
+                               ), dim=1)
         out.append(pred_info)
-    return torch.stack(out)
-
+    return out
 
 
 # endregion
@@ -150,7 +145,8 @@ class DetectHead(nn.Module):
         dbox = (
             self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
         )
-        return dbox, cls
+
+        return multibox_detection(cls, dbox)
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
