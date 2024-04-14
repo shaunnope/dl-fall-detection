@@ -1,3 +1,4 @@
+# Some sections adapted from https://github.com/ultralytics/ultralytics/tree/3c179f87cb4a10629dbcf9ee4633ded412d02707
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 import math
 
@@ -5,9 +6,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from utils import bbox2dist, bbox_iou, dist2bbox, make_anchors, xywh2xyxy
 
 
+## /ultralytics/utils/tal.py
 class TaskAlignedAssigner(nn.Module):
     """
     A task-aligned assigner for object detection.
@@ -344,7 +347,7 @@ class TaskAlignedAssigner(nn.Module):
         target_gt_idx = mask_pos.argmax(-2)  # (b, h*w)
         return target_gt_idx, fg_mask, mask_pos
 
-
+## /ultralytics/utils/loss.py
 class BboxLoss(nn.Module):
     """Criterion class for computing training losses during training."""
 
@@ -461,7 +464,7 @@ class DetectionLoss:
             # pred_dist = (pred_dist.view(b, a, c // 4, 4).softmax(2) * self.proj.type(pred_dist.dtype).view(1, 1, -1, 1)).sum(2)
         return dist2bbox(pred_dist, anchor_points, xywh=False)
 
-    def __call__(self, preds, batch):
+    def __call__(self, preds, batch, eval=False):
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
         loss = torch.zeros(3, device=self.device)  # box, cls, dfl
         feats = preds[1] if isinstance(preds, tuple) else preds
@@ -492,7 +495,7 @@ class DetectionLoss:
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
 
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            pred_scores.detach().sigmoid(),
+            pred_scores.detach().exp(),
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor,
             gt_labels,
@@ -502,11 +505,10 @@ class DetectionLoss:
 
         target_scores_sum = max(target_scores.sum(), 1)
 
-        # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
+        # Cls loss (BCE)
         loss[1] = (
             self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum
-        )  # BCE
+        )
 
         # Bbox loss
         if fg_mask.sum():
@@ -524,5 +526,10 @@ class DetectionLoss:
         loss[0] *= self.hyp["box"]  # box gain
         loss[1] *= self.hyp["cls"]  # cls gain
         loss[2] *= self.hyp["dfl"]  # dfl gain
+
+        if eval:
+            fg_preds = pred_scores[fg_mask].exp()
+            fg_targets = target_scores[fg_mask].argmax(1)
+            return loss.sum() * batch_size, loss.detach(), fg_preds.detach(), fg_targets.detach()
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
