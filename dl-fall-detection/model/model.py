@@ -95,7 +95,7 @@ class DetectHead(nn.Module):
     def forward(self, x, encoded=False):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
 
-        x = [torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1) for i in range(self.nl)]
+        x = [torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]).log_softmax(1)), 1) for i in range(self.nl)]
         if self.training or encoded:  # Training path
             return x
         
@@ -115,8 +115,7 @@ class DetectHead(nn.Module):
         dbox = (
             self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
         )
-        y = torch.cat((dbox, cls.sigmoid()), 1)
-        return y
+        return dbox, cls
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
