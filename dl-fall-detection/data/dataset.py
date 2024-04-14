@@ -196,7 +196,7 @@ def get_dataloaders(datasets, batch_size=16, shuffle=True, num_workers=0):
         ),
     }
 
-def get_data(dir, transform=None, batch_size=16, device=DEVICE, end=None):
+def get_data(dir, transform=transform_data, batch_size=16, device=DEVICE, end=None):
     datasets = get_datasets(dir, transform, device, end)
     return {
         "datasets": datasets,
